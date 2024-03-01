@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "1brc": {
+      "commandName": "Project",
+      "commandLineArgs": " c:/1brc_data/100M_measurements.txt"
+    }
+  }
+}
