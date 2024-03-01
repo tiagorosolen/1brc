@@ -32,34 +32,25 @@ internal class Program
         Console.WriteLine($"Initializing...");
 
         // Working variables
-        List<Reading> readings = new List<Reading>();
         Dictionary<string, Station> stations = new Dictionary<string, Station>();
-
 
         // Loading the file
         Stopwatch timer = new Stopwatch();
         timer.Start();
-        Console.WriteLine($"Opening file...");        
-        var data = File.ReadAllLines(args[0]);
+        Console.WriteLine($"Opening file...");
+        //var data = File.ReadAllLines(args[0]);
+        var data = File.OpenText(args[0]);
 
         // 
-        Console.WriteLine($"Collecting...");
-        Stopwatch ctimer = new Stopwatch();
-        ctimer.Start();
-
-        foreach ( var line in data ) 
-        {
-            var point = line.Split(';');
-            readings.Add(new Reading() { name = point[0], value = double.Parse(point[1]) });
-        }
-        ctimer.Stop();
-
-        Console.WriteLine($"Collected in {ctimer.Elapsed.TotalMilliseconds/1000}s");
+        Console.WriteLine($"Processing...");
 
         int r = 0;
-        foreach (var reading in readings)
+        while (data.Peek() != -1)
         {
-            if(stations.ContainsKey(reading.name)) 
+            var point = data.ReadLine().Split(';');
+            var reading = new Reading() { name = point[0], value = double.Parse(point[1]) };
+
+            if (stations.ContainsKey(reading.name)) 
             {
                 if (stations[reading.name].min > reading.value)
                     stations[reading.name].min = reading.value;
