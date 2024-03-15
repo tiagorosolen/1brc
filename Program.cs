@@ -11,14 +11,15 @@ internal class Program
 
     public class Station
     {
-        public List<double> values = new List<double>();
+        public double avg;
+        public double count;
         public double min;
         public double max;
     }
 
     public static List<Dictionary<string, Station>> allResults = new List<Dictionary<string, Station>>();
     public static Dictionary<int, (long, long)> mapOfBytePositions = new Dictionary<int, (long, long)>();
-    public static int lines = 0;
+    public static long lines = 0;
 
     private static async Task Main(string[] args)
     {
@@ -61,28 +62,23 @@ internal class Program
         
         for (int i = 0; i < numOfCpus - 1; i++)
         {
-            //Console.WriteLine($"Looking...");
             do
             {
                 byte[] b = new byte[1];
                 baseFile.Read(b, 0, b.Length);
                 if (b[0] != '\n')
                 {
-                    //Console.WriteLine($"pos {endOfBlock + stepsToBreak} = {(char)b[0]}");
                     stepsToBreak++;
                 }
                 else
                 {
                     // found the \n. Let's update the endOfBlock
                     endOfBlock = endOfBlock + stepsToBreak;
-                    Console.WriteLine($"Found at {endOfBlock}");
 
                     mapOfBytePositions.Add(i, (startOfBlock, endOfBlock));
-                    //
                     startOfBlock = endOfBlock + 1;
                     endOfBlock = startOfBlock + bytesPerCpu;
                     baseFile.Position = endOfBlock; // next block starts at the end of next block
-                    //Console.WriteLine($"jumping to position {endOfBlock}");
                     stepsToBreak = 0;
                     break;
                 }
@@ -92,8 +88,6 @@ internal class Program
         // the last one get's the rest
         mapOfBytePositions.Add(numOfCpus - 1, (startOfBlock, totalBytes));
         List<List<string>> listOfallBlocks = new List<List<string>>();
-
-        baseFile.Close(); // each loop will use a different file.
 
         int cpuLoops = 0;
         var linesPerCpu = lineToProcess / numOfCpus; //
@@ -123,9 +117,66 @@ internal class Program
         {
             foreach (var station in sortedDict)
             {
-                outputFile.WriteLine($"{station.Key};{station.Value.min};{station.Value.max};{station.Value.values.Average().ToString("0.##")}");
+                double avg = (station.Value.avg / station.Value.count);
+                outputFile.WriteLine($"{station.Key};{station.Value.min};{station.Value.max};{avg.ToString("0.##")}");
             }
         }
+    }
+
+    private static async Task<bool> ProcessListByReadLine(int cpu, string file, long startByte, long stopByte)
+    {
+        Dictionary<string, Station> stations = new Dictionary<string, Station>();
+
+        await Task.Run(() =>
+        {
+            var data = File.OpenText(file);
+            data.BaseStream.Position = startByte;
+            long linesProcesssed = 0;
+            long bytesProcessed = 0;
+            var stringLine = "";
+            while (bytesProcessed + startByte <= stopByte)
+            {
+                stringLine = data.ReadLine();
+                if (stringLine != null)
+                {
+                    var point = stringLine.Split(';');
+                    double value = double.Parse(point[1], CultureInfo.InvariantCulture);
+
+                    if (stations.ContainsKey(point[0]))
+                    {
+                        if (stations[point[0]].min > value)
+                            stations[point[0]].min = value;
+
+                        if (stations[point[0]].max < value)
+                            stations[point[0]].max = value;
+
+                        stations[point[0]].avg += value;
+                        stations[point[0]].count++;
+                    }
+                    else
+                    {
+                        var st = new Station();
+                        st.min = value;
+                        st.max = value;
+                        st.avg = value;
+                        st.count++;
+                        stations.Add(point[0], st);
+                    }
+                    bytesProcessed = bytesProcessed + stringLine.Length + 1;
+                    linesProcesssed++;
+                }
+                else
+                {
+                    Console.WriteLine($"CPU {cpu + 1} completed. Processed {linesProcesssed} lines");
+                    break;
+                }
+            }
+            Console.WriteLine($"CPU {cpu + 1} completed. Processed {linesProcesssed} lines");
+            allResults.Add(stations);
+            lines += linesProcesssed;
+        });
+
+        return true;
     }
 
     private static async Task<bool> ProcessListByLine(int cpu, string file, long startByte, long stopByte)
@@ -134,73 +185,65 @@ internal class Program
         
         await Task.Run(() =>
         {
-            //var data = File.OpenText(file);
-            //data.BaseStream.Position = startByte;
             var options = new FileStreamOptions();
-            options.BufferSize = 1024;
+            options.BufferSize = 16000;
             var data = new FileStream(file, options);
             data.Position = startByte;
-            //bool printDebug = true;
             
-            //string lastline = "";
             byte[] buff = new byte[128];
-            var bytesProcessed = 0;
+            long bytesProcessed = 0;
             var linesProcesssed = 0;
-            string lineToBeread = "";
-            while (bytesProcessed + startByte <= stopByte)
+            //string lineToBeread = "";
+            int comma = 0;
+            int i = 0;
+            while (bytesProcessed + startByte < stopByte)
             {
                 
-                for (int i = 0; i < 128; i++)
+                for (i = 0; i < 128; i++)
                 { 
                     var b = data.ReadByte();
                     bytesProcessed++;
                     if (b != 10 && b != -1)
                     {
                         buff[i] = (byte)b;
+                        if (b == ';')
+                            comma = i;
                     }
                     else
-                    {
-                        lineToBeread = Encoding.UTF8.GetString(buff, 0, i);
+                    {                        
                         break;
                     }
                 }
-                
-                if (lineToBeread == "")
-                    break;
 
-                var point = lineToBeread.Split(';');
-                double value = double.Parse(point[1], CultureInfo.InvariantCulture);
-                /*if (printDebug)
+                //var point = lineToBeread.Split(';');
+                var point = Encoding.UTF8.GetString(buff, 0, comma);
+                double value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma-1), CultureInfo.InvariantCulture);
+
+                if (stations.ContainsKey(point))
                 {
-                    Console.WriteLine(" ");
-                    Console.WriteLine($"CPU {cpu+1} from {startByte} to {stopByte}. First line: {point[0]};{point[1]}");
-                    printDebug = false;
-                }*/
+                    if (stations[point].min > value)
+                        stations[point].min = value;
 
-                if (stations.ContainsKey(point[0]))
-                {
-                    if (stations[point[0]].min > value)
-                        stations[point[0]].min = value;
+                    if (stations[point].max < value)
+                        stations[point].max = value;
 
-                    if (stations[point[0]].max < value)
-                        stations[point[0]].max = value;
-
-                    //stations[point[0]].avg = (stations[point[0]].avg + value) / 2;
-                    stations[point[0]].values.Add(value);
+                    stations[point].avg += value;
+                    stations[point].count++;
                 }
                 else
                 {
                     var st = new Station();
                     st.min = value;
                     st.max = value;
-                    st.values.Add(value);
-                    stations.Add(point[0], st);
+                    st.avg = value;
+                    st.count++;
+                    stations.Add(point, st);
                 }
                 linesProcesssed++;
-                //lastline = lineToBeread;
-                lineToBeread = "";
+                comma = 0;
+                //lineToBeread = "";
             }
-            Console.WriteLine($"CPU {cpu+1} completed. Processed {linesProcesssed} lines");
+            //Console.WriteLine($"CPU {cpu+1} completed. Processed {linesProcesssed} lines");
             allResults.Add(stations);
             lines += linesProcesssed;
         });
@@ -223,8 +266,8 @@ internal class Program
                     if (stations[listOfResults.Key].max < listOfResults.Value.max)
                         stations[listOfResults.Key].max = listOfResults.Value.max;
 
-                    //stations[listOfResults.Key].avg = (stations[listOfResults.Key].avg + listOfResults.Value.avg) / 2;
-                    stations[listOfResults.Key].values.AddRange(listOfResults.Value.values);
+                    stations[listOfResults.Key].avg = stations[listOfResults.Key].avg + listOfResults.Value.avg;
+                    stations[listOfResults.Key].count += listOfResults.Value.count;
                 }
                 else
                 {
