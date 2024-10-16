@@ -50,7 +50,8 @@ internal class Program
         var totalBytes = baseFile.Length;
         int bytesPerCpu = (int)(totalBytes / numOfCpus);         
 
-        // split the bytes in <processors> blocks        
+        // Split the bytes in <processors> blocks
+        // This finds the '\n' near the block's end and makes sure that each processor blocks has no partial lines
         long startOfBlock = 0;
         long endOfBlock = (int)bytesPerCpu;
         int stepsToBreak = 0;
@@ -86,7 +87,6 @@ internal class Program
         List<List<string>> listOfallBlocks = new List<List<string>>();
 
         int cpuLoops = 0;
-        var linesPerCpu = lineToProcess / numOfCpus; //
         Task[] tasks = new Task[numOfCpus];
         while (cpuLoops < numOfCpus)
         {
@@ -97,10 +97,11 @@ internal class Program
         }
 
         // 
-        Console.WriteLine($"Processing...");
+        Console.WriteLine($"Processing file...");
         await Task.WhenAll(tasks);
 
         //
+        Console.WriteLine($"Integrating results...");
         stations = IntegrateResults(allResults);        
 
         timer.Stop();
@@ -187,6 +188,7 @@ internal class Program
 
         return true;
     }
+
     private static Dictionary<int, Station> IntegrateResults(List<Dictionary<int, Station>> allResults)
     {
         Dictionary<int, Station> stations = new Dictionary<int, Station>();
