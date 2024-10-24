@@ -1,9 +1,8 @@
-﻿using System.Diagnostics;
+﻿using OneBrcUtilities;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.MemoryMappedFiles;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics.X86;
 using System.Text;
 
 internal class Program
@@ -23,6 +22,8 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
+        CultureInfo cultureInfo = CultureInfo.CreateSpecificCulture("en-US");
+        Thread.CurrentThread.CurrentCulture = cultureInfo;
 
         var lineToProcess = 0;
         if (args.Length == 0)
@@ -101,7 +102,7 @@ internal class Program
         var useMMF = true;
         if (useMMF)
         {
-            MemoryMappedFile mmf = MemFile(args[0]);
+            MemoryMappedFile mmf = OneBrcUtility.CreateMemoryMappedFile(args[0]);
             while (cpuLoops < numOfCpus)
             {
                 var startPoint = mapOfBytePositions[cpuLoops].Item1;
@@ -165,12 +166,10 @@ internal class Program
                     stream.Read(buff, 0, 48);
                     for (i = 0; i < 48; i++)
                     {
-                        var b = buff[i];
                         bytesProcessed++;
-                        if (b != 10)
+                        if (buff[i] != 10)
                         {
-                            buff[i] = (byte)b;
-                            if (b == ';')
+                            if (buff[i] == ';')
                                 comma = i;
                         }
                         else
@@ -181,7 +180,8 @@ internal class Program
                     stream.Position = bytesProcessed;
 
                     var pointName = Encoding.UTF8.GetString(buff, 0, comma);
-                    var value = CustomParseDouble(buff, comma + 1, i - comma - 1);
+                    //var value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma - 1));
+                    double value = OneBrcUtility.ParseDouble(buff, comma + 1, i - comma - 1);
                     var point = pointName.GetHashCode();
 
                     if (stations.ContainsKey(point))
@@ -225,7 +225,7 @@ internal class Program
         await Task.Run(() =>
         {
             var options = new FileStreamOptions();
-            options.BufferSize = 16000;
+            options.BufferSize = 1024;
             var data = new FileStream(file, options);
             data.Position = startByte;
 
@@ -253,7 +253,8 @@ internal class Program
                 }
 
                 var pointName = Encoding.UTF8.GetString(buff, 0, comma);
-                double value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma - 1), CultureInfo.InvariantCulture);
+                //double value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma - 1), CultureInfo.InvariantCulture);
+                double value = OneBrcUtility.ParseDouble(buff, comma + 1, i - comma - 1);
                 var point = pointName.GetHashCode();
 
                 if (stations.ContainsKey(point))
@@ -314,129 +315,5 @@ internal class Program
         }
 
         return stations;
-    }
-    private static MemoryMappedFile MemFile(string path)
-    {
-        return MemoryMappedFile.CreateFromFile(
-                  //include a readonly shared stream
-                  File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read),
-                  //not mapping to a name
-                  null,
-                  //use the file's actual size
-                  0L,
-                  //read only access
-                  MemoryMappedFileAccess.Read,
-                  //adjust as needed
-                  HandleInheritability.Inheritable,
-                  //close the previously passed in stream when done
-                  false);
-
-    }
-
-    private static decimal CustomParseDecimal(string input)
-    {
-        long n = 0;
-        int decimalPosition = input.Length;
-        for (int k = 0; k < input.Length; k++)
-        {
-            char c = input[k];
-            if (c == '.')
-                decimalPosition = k + 1;
-            else
-                n = (n * 10) + (int)(c - '0');
-        }
-        return new decimal((int)n, (int)(n >> 32), 0, false, (byte)(input.Length - decimalPosition));
-
-    }
-    
-    private static double CustomParseDouble(byte[] buff, int v1, int v2)
-    {
-        var stringNumber = Encoding.UTF8.GetString(buff, v1, v2);
-
-        // Largest format possible = -XX.XX
-        // '.' can only be at index 1, 2 or 3
-        var len = v2;
-        if (buff[v1] == 45)
-        {
-            v1++;
-            len--;
-            if (buff[v1 + 1] == 46)
-            {                
-                // -X.X
-                // -XX.X
-                // -XX.XX
-                if (len == 3)
-                {
-                    // X.X
-                    return ((buff[v1] - 0x30) +  ((buff[v1 + 2] - 0x30) / 10.0)) *-1;
-                }
-                else if (len == 4)
-                {
-                    // XX.X
-                    return ((((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + ((buff[v1 + 3] - 0x30) / 10.0)) *-1;
-                }
-                else
-                {
-                    // XX.XX
-                    return ((((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + (((buff[v1 + 3] - 0x30) * 10) + (buff[v1 + 4] - 0x30)) / 10.0) *-1;
-                }                
-            }
-            else
-            {
-                // -XX.X
-                // -XX.XX
-                if (len == 4)
-                {
-                    // XX.X
-                    return ((((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + ((buff[v1 + 3] - 0x30) / 10.0)) *-1;
-                }
-                else
-                {
-                    // XX.XX
-                    return ((((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + (((buff[v1 + 3] - 0x30) * 10) + (buff[v1 + 4] - 0x30)) / 10.0) * -1;
-                }
-            }
-        }
-        else
-        {
-            // X.XX
-            // X.X
-            if (buff[v1+1] == 46)
-            {
-                // X.X
-                // XX.X
-                // XX.XX
-                if (len == 3)
-                {
-                    // X.X
-                    return (buff[v1] - 0x30) + ((buff[v1 + 2] - 0x30) / 10.0);
-                }
-                else if (len == 4)
-                {
-                    // XX.X
-                    return (((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + ((buff[v1 + 3] - 0x30) / 10.0);
-                }
-                else
-                {
-                    // XX.XX
-                    return (((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + (((buff[v1 + 3] - 0x30) * 10) + (buff[v1 + 4] - 0x30)) / 10.0;
-                }
-            }
-            else
-            {
-                // XX.X
-                // XX.XX
-                if (len == 4)
-                {
-                    // XX.X
-                    return (((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + ((buff[v1 + 3] - 0x30) / 10.0);
-                }
-                else
-                {
-                    // XX.XX
-                    return (((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + (((buff[v1+3] - 0x30) * 10) + (buff[v1 + 4] - 0x30)) / 10.0;
-                }
-            }
-        }
     }
 }

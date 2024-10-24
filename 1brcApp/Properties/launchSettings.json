@@ -2,7 +2,7 @@
   "profiles": {
     "1brc": {
       "commandName": "Project",
-      "commandLineArgs": "c:/1brc_data/1B_measurements.txt"
+      "commandLineArgs": "c:/1brc_data/1B_measurements.txt 1"
     }
   }
 }
