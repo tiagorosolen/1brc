@@ -29,8 +29,7 @@ namespace OneBrcTests
                 outputValue = OneBrcUtility.ParseDouble(buf, 0, valueStr.Length);
 
                 double reff = double.Parse(strValue);
-                Assert.AreEqual(outputValue, reff, 0.1);
-
+                Assert.AreEqual(outputValue, reff, 0.01);
             }
         }
     }

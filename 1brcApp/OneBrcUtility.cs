@@ -22,6 +22,8 @@ namespace OneBrcUtilities
                 // XX.X
                 return ((((buff[v1] - 0x30) * 10) + buff[v1 + 1] - 0x30) + ((buff[v1 + 3] - 0x30) / 10.0)) * (negative ? -1 : 1);
             }
+
+            // This values without decimal points wont even show up in the 1brc data.. but why not keep it...
             if(v1 + 1 == v2) 
             {
                 // X
@@ -38,19 +40,12 @@ namespace OneBrcUtilities
         public static MemoryMappedFile CreateMemoryMappedFile(string path)
         {
             return MemoryMappedFile.CreateFromFile(
-                      //include a readonly shared stream
-                      File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read),
-                      //not mapping to a name
-                      null,
-                      //use the file's actual size
-                      0L,
-                      //read only access
-                      MemoryMappedFileAccess.Read,
-                      //adjust as needed
-                      HandleInheritability.Inheritable,
-                      //close the previously passed in stream when done
-                      false);
-
+                File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read),
+                null,
+                0L,
+                MemoryMappedFileAccess.Read,
+                HandleInheritability.Inheritable,
+                false);
         }
     }
 }

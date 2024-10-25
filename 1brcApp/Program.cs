@@ -99,27 +99,13 @@ internal class Program
         var linesPerCpu = lineToProcess / numOfCpus;
         Task[] tasks = new Task[numOfCpus];
 
-        var useMMF = true;
-        if (useMMF)
+        MemoryMappedFile mmf = OneBrcUtility.CreateMemoryMappedFile(args[0]);
+        while (cpuLoops < numOfCpus)
         {
-            MemoryMappedFile mmf = OneBrcUtility.CreateMemoryMappedFile(args[0]);
-            while (cpuLoops < numOfCpus)
-            {
-                var startPoint = mapOfBytePositions[cpuLoops].Item1;
-                var stopByte = mapOfBytePositions[cpuLoops].Item2;
-                tasks[cpuLoops] = ProcessListByMmf(mmf, startPoint, stopByte);
-                cpuLoops++;
-            }
-        }
-        else
-        {
-            while (cpuLoops < numOfCpus)
-            {
-                var startPoint = mapOfBytePositions[cpuLoops].Item1;
-                var stopByte = mapOfBytePositions[cpuLoops].Item2;
-                tasks[cpuLoops] = ProcessListByLine(cpuLoops, args[0], startPoint, stopByte);
-                cpuLoops++;
-            }
+            var startPoint = mapOfBytePositions[cpuLoops].Item1;
+            var stopByte = mapOfBytePositions[cpuLoops].Item2;
+            tasks[cpuLoops] = ProcessListByMmf(mmf, startPoint, stopByte);
+            cpuLoops++;
         }
 
         // 
@@ -160,6 +146,7 @@ internal class Program
                 long bytesProcessed = 0;
                 var linesProcesssed = 0;
                 int comma = 0;
+                int end = 0;
                 int i = 0;
                 while (bytesProcessed + startByte < stopByte)
                 {
@@ -174,14 +161,14 @@ internal class Program
                         }
                         else
                         {
+                            end = i;
                             break;
                         }
                     }
                     stream.Position = bytesProcessed;
 
                     var pointName = Encoding.UTF8.GetString(buff, 0, comma);
-                    //var value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma - 1));
-                    double value = OneBrcUtility.ParseDouble(buff, comma + 1, i - comma - 1);
+                    double value = OneBrcUtility.ParseDouble(buff, comma + 1, end - 1);
                     var point = pointName.GetHashCode();
 
                     if (stations.ContainsKey(point))
@@ -212,77 +199,6 @@ internal class Program
                 allResults.Add(stations);
                 lines += linesProcesssed;
             }
-        });
-
-        return true;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static async Task<bool> ProcessListByLine(int cpu, string file, long startByte, long stopByte)
-    {
-        Dictionary<int, Station> stations = new Dictionary<int, Station>();
-
-        await Task.Run(() =>
-        {
-            var options = new FileStreamOptions();
-            options.BufferSize = 1024;
-            var data = new FileStream(file, options);
-            data.Position = startByte;
-
-            byte[] buff = new byte[128];
-            long bytesProcessed = 0;
-            var linesProcesssed = 0;
-            int comma = 0;
-            int i = 0;
-            while (bytesProcessed + startByte < stopByte)
-            {
-                for (i = 0; i < 128; i++)
-                {
-                    var b = data.ReadByte();
-                    bytesProcessed++;
-                    if (b != 10 && b != -1)
-                    {
-                        buff[i] = (byte)b;
-                        if (b == ';')
-                            comma = i;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-
-                var pointName = Encoding.UTF8.GetString(buff, 0, comma);
-                //double value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma - 1), CultureInfo.InvariantCulture);
-                double value = OneBrcUtility.ParseDouble(buff, comma + 1, i - comma - 1);
-                var point = pointName.GetHashCode();
-
-                if (stations.ContainsKey(point))
-                {
-                    if (stations[point].min > value)
-                        stations[point].min = value;
-
-                    if (stations[point].max < value)
-                        stations[point].max = value;
-
-                    stations[point].avg += value;
-                    stations[point].count++;
-                }
-                else
-                {
-                    var st = new Station();
-                    st.min = value;
-                    st.max = value;
-                    st.avg = value;
-                    st.name = pointName;
-                    st.count++;
-                    stations.Add(point, st);
-                }
-                linesProcesssed++;
-                comma = 0;
-            }
-            allResults.Add(stations);
-            lines += linesProcesssed;
         });
 
         return true;
