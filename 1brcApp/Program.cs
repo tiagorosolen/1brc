@@ -1,5 +1,8 @@
-﻿using System.Diagnostics;
+﻿using OneBrcUtilities;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO.MemoryMappedFiles;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 internal class Program
@@ -19,6 +22,8 @@ internal class Program
 
     private static async Task Main(string[] args)
     {
+        CultureInfo cultureInfo = CultureInfo.CreateSpecificCulture("en-US");
+        Thread.CurrentThread.CurrentCulture = cultureInfo;
 
         var lineToProcess = 0;
         if (args.Length == 0)
@@ -33,10 +38,15 @@ internal class Program
             Environment.Exit(0);
         }
 
+        int numOfCpus = Environment.ProcessorCount;
+        if (args.Length == 2)
+        {
+            int.TryParse(args[1], out numOfCpus);
+        }
+
         Console.WriteLine($"Initializing...");
 
-        // Working variables
-        int numOfCpus = Environment.ProcessorCount;
+        // Working variables        
         Dictionary<int, Station> stations = new Dictionary<int, Station>();
         Stopwatch timer = new Stopwatch();
         var options = new FileStreamOptions();
@@ -48,15 +58,14 @@ internal class Program
 
         var baseFile = new FileStream(args[0], options);
         var totalBytes = baseFile.Length;
-        int bytesPerCpu = (int)(totalBytes / numOfCpus);         
+        int bytesPerCpu = (int)(totalBytes / numOfCpus);
 
-        // Split the bytes in <processors> blocks
-        // This finds the '\n' near the block's end and makes sure that each processor blocks has no partial lines
+        // split the bytes in <processors> blocks        
         long startOfBlock = 0;
         long endOfBlock = (int)bytesPerCpu;
         int stepsToBreak = 0;
         baseFile.Position = endOfBlock; // starts at the end        
-        
+
         for (int i = 0; i < numOfCpus - 1; i++)
         {
             do
@@ -87,27 +96,29 @@ internal class Program
         List<List<string>> listOfallBlocks = new List<List<string>>();
 
         int cpuLoops = 0;
+        var linesPerCpu = lineToProcess / numOfCpus;
         Task[] tasks = new Task[numOfCpus];
+
+        MemoryMappedFile mmf = OneBrcUtility.CreateMemoryMappedFile(args[0]);
         while (cpuLoops < numOfCpus)
         {
             var startPoint = mapOfBytePositions[cpuLoops].Item1;
             var stopByte = mapOfBytePositions[cpuLoops].Item2;
-            tasks[cpuLoops] = ProcessListByLine(cpuLoops, args[0], startPoint, stopByte);
+            tasks[cpuLoops] = ProcessListByMmf(mmf, startPoint, stopByte);
             cpuLoops++;
         }
 
         // 
-        Console.WriteLine($"Processing file...");
+        Console.WriteLine($"Processing...");
         await Task.WhenAll(tasks);
 
         //
-        Console.WriteLine($"Integrating results...");
-        stations = IntegrateResults(allResults);        
+        stations = IntegrateResults(allResults);
 
         timer.Stop();
 
         Console.WriteLine(" ");
-        Console.WriteLine($"File with {lines} registries was processed in {(timer.Elapsed.TotalMilliseconds/1000).ToString("0.##")}s ");
+        Console.WriteLine($"File with {lines} registries was processed in {(timer.Elapsed.TotalMilliseconds / 1000).ToString("0.##")}s ");
 
         var sortedDict = stations.OrderBy(pair => pair.Value.name).ToDictionary(pair => pair.Key, pair => pair.Value);
         using (StreamWriter outputFile = new StreamWriter("c:/temp/1B_unchecked.txt"))
@@ -120,70 +131,74 @@ internal class Program
         }
     }
 
-    private static async Task<bool> ProcessListByLine(int cpu, string file, long startByte, long stopByte)
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static async Task<bool> ProcessListByMmf(MemoryMappedFile mmf, long startByte, long stopByte)
     {
         Dictionary<int, Station> stations = new Dictionary<int, Station>();
-        
+
         await Task.Run(() =>
         {
-            var options = new FileStreamOptions();
-            options.BufferSize = 16000;
-            var data = new FileStream(file, options);
-            data.Position = startByte;
-            
-            byte[] buff = new byte[128];
-            long bytesProcessed = 0;
-            var linesProcesssed = 0;
-            int comma = 0;
-            int i = 0;
-            while (bytesProcessed + startByte < stopByte)
-            {                
-                for (i = 0; i < 128; i++)
-                { 
-                    var b = data.ReadByte();
-                    bytesProcessed++;
-                    if (b != 10 && b != -1)
+            var size = stopByte - startByte;
+            using (var stream = mmf.CreateViewStream(startByte, size, MemoryMappedFileAccess.Read))
+            {
+
+                byte[] buff = new byte[48];
+                long bytesProcessed = 0;
+                var linesProcesssed = 0;
+                int comma = 0;
+                int end = 0;
+                int i = 0;
+                while (bytesProcessed + startByte < stopByte)
+                {
+                    stream.Read(buff, 0, 48);
+                    for (i = 0; i < 48; i++)
                     {
-                        buff[i] = (byte)b;
-                        if (b == ';')
-                            comma = i;
+                        bytesProcessed++;
+                        if (buff[i] != 10)
+                        {
+                            if (buff[i] == ';')
+                                comma = i;
+                        }
+                        else
+                        {
+                            end = i;
+                            break;
+                        }
+                    }
+                    stream.Position = bytesProcessed;
+
+                    var pointName = Encoding.UTF8.GetString(buff, 0, comma);
+                    double value = OneBrcUtility.ParseDouble(buff, comma + 1, end - 1);
+                    var point = pointName.GetHashCode();
+
+                    if (stations.ContainsKey(point))
+                    {
+                        if (stations[point].min > value)
+                            stations[point].min = value;
+
+                        if (stations[point].max < value)
+                            stations[point].max = value;
+
+                        stations[point].avg += value;
+                        stations[point].count++;
                     }
                     else
-                    {                        
-                        break;
+                    {
+                        var st = new Station();
+                        st.min = value;
+                        st.max = value;
+                        st.avg = value;
+                        st.name = pointName;
+                        st.count++;
+                        stations.Add(point, st);
                     }
+                    linesProcesssed++;
+                    comma = 0;
+                    buff = new byte[48];
                 }
-
-                var pointName = Encoding.UTF8.GetString(buff, 0, comma);                
-                double value = double.Parse(Encoding.UTF8.GetString(buff, comma + 1, i - comma-1), CultureInfo.InvariantCulture);
-                var point = pointName.GetHashCode();
-
-                if (stations.ContainsKey(point))
-                {
-                    if (stations[point].min > value)
-                        stations[point].min = value;
-
-                    if (stations[point].max < value)
-                        stations[point].max = value;
-
-                    stations[point].avg += value;
-                    stations[point].count++;
-                }
-                else
-                {
-                    var st = new Station();
-                    st.min = value;
-                    st.max = value;
-                    st.avg = value;
-                    st.name = pointName;
-                    st.count++;
-                    stations.Add(point, st);
-                }
-                linesProcesssed++;
-                comma = 0;
+                allResults.Add(stations);
+                lines += linesProcesssed;
             }
-            allResults.Add(stations);
-            lines += linesProcesssed;
         });
 
         return true;
@@ -217,5 +232,4 @@ internal class Program
 
         return stations;
     }
-
 }
